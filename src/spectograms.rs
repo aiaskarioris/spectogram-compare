@@ -8,7 +8,6 @@ use std::{
 
 // FFT algorithms for STFT
 use rustfft::{FftPlanner, num_complex::Complex};
-use symphonia::core::sample;
 
 
 // Multithreaded variants ---------------------------------------------------------------------------------------------------
@@ -151,7 +150,7 @@ fn mt_track_to_spec_thread(fft_size: usize, input_track: &TrackBuffer, tx: Sende
 
         new_percentage = (samples_processed * 100 / buffer_duration) as i32;
         if new_percentage > last_percentage {
-            tx.send(new_percentage);
+            let _ = tx.send(new_percentage);
             last_percentage = new_percentage;
         }
 
@@ -199,12 +198,13 @@ fn mt_track_to_spec_thread(fft_size: usize, input_track: &TrackBuffer, tx: Sende
         if samples_processed > buffer_duration { break; }
     }
 
-    tx.send(100);
+    let _ = tx.send(100);
+
     // The mutex will be unlocked automatically now
 }
 
-// ---------------------------------------------------------------------------------------------------------------------------------
 
+// Single core variants -----------------------------------------------------------------------------------------------------
 // Convert a track to a spectogram
 pub fn track_to_spec(fft_size_u32: u32, sample_buffer: &TrackBuffer) -> StereoSpectogram {
     let fft_size: usize = fft_size_u32 as usize;
@@ -313,8 +313,7 @@ pub fn track_to_spec(fft_size_u32: u32, sample_buffer: &TrackBuffer) -> StereoSp
 
 // Compares two stereo spectograms; Returns a tuple: a vector with the mean error of each frame and the total mean error
 // The error of each channel is calculated independantly and the mean of the two is kept
-pub fn time_compare_spectogram(bins: u32, spec_a: &StereoSpectogram, spec_b: &StereoSpectogram, _has_original: bool) -> Result<(Vec<f32>, f32), String> {
-    let compare_start = Instant::now();
+pub fn time_compare_spectogram(bins: u32, spec_a: &StereoSpectogram, spec_b: &StereoSpectogram) -> Result<(Vec<f32>, f32), String> {
     let bins_us = bins as usize;
 
     let (spec_a_l, spec_a_r) = (&spec_a.left, &spec_a.right);
@@ -371,16 +370,12 @@ pub fn time_compare_spectogram(bins: u32, spec_a: &StereoSpectogram, spec_b: &St
     }
     mean_error /= usable_frames as f32;
 
-    //let compare_time = compare_start.elapsed();
-    //println!("\r    Time Comparison Complete. \t[{} ms]", compare_time.as_millis());
-
     Result::Ok((mean_err_vec, mean_error))
 }
 
 // Compares two stereo spectograms in terms of frequency; For each bin, the mean error from all frames is returned
 // If `has_original` is set, `spec_a` is treated as the original.
-pub fn freq_compare_spectogram(bins: u32, spec_a: &StereoSpectogram, spec_b: &StereoSpectogram, _has_original: bool) -> Result<(Vec<f32>, f32), String> {
-    let compare_start = Instant::now();
+pub fn freq_compare_spectogram(bins: u32, spec_a: &StereoSpectogram, spec_b: &StereoSpectogram) -> Result<(Vec<f32>, f32), String> {
     let bins_us = bins as usize;
 
     let (spec_a_l, spec_a_r) = (&spec_a.left, &spec_a.right);
@@ -445,9 +440,6 @@ pub fn freq_compare_spectogram(bins: u32, spec_a: &StereoSpectogram, spec_b: &St
         mean_error += mean_err_vec[b as usize];
     }
     mean_error /= bins as f32;
-
-    //let compare_time = compare_start.elapsed();
-    //println!("\r    Frequency Comparison Complete \t[{} ms]", compare_time.as_millis());
 
     Result::Ok((mean_err_vec, mean_error))
 }

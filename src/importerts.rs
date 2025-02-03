@@ -12,12 +12,11 @@ use symphonia::core::{
 
 use crate::types::*;
 
-// Multithreaded variants ---------------------------------------------------------------------------------------------------
+// Multithreaded ---------------------------------------------------------------------------------------------------
 // Imports the 4 separated tracks from a directory; The names of the .mp3 files must be {bass, drums, vocals, other}.mp3
 // Returns TrackBuffers and true if the directory contains the original stems.
-pub fn mt_import_from_directory(path: &String) -> Result<(Vec<TrackBuffer>, bool), String> {
+pub fn mt_import_from_directory(path: &String) -> Result<Vec<TrackBuffer>, String> {
     println!("Looking into {} for separated stems...", path);
-    let mut is_original: bool = false;
 
     // Check this directory has all the required files
     let dir_contents = match std::fs::read_dir(path) {
@@ -35,20 +34,13 @@ pub fn mt_import_from_directory(path: &String) -> Result<(Vec<TrackBuffer>, bool
     for e in dir_contents {
         let entry = match e {
             Ok(r)  => { r }
-            Err(_) => { continue; } // Error entries will be silently skipped
+            Err(_) => { continue; } // Bad entries will be silently skipped
         };
 
         let mut req_files_it = required_files.iter();
         // Get entry's path and filename
         let item_path = &entry.path();
         let item_name = item_path.file_name().unwrap();
-        
-        // Check if the `.original` hidden file exists
-        if item_name.eq(".original") {
-            is_original = true;
-            print!("Detected that this is the original source directory.");
-            continue;
-        }
 
         // Search for the filename in `required_files`
         match req_files_it.position(|&x| x == item_name) {
@@ -120,12 +112,13 @@ pub fn mt_import_from_directory(path: &String) -> Result<(Vec<TrackBuffer>, bool
                     samples_decoded[i] = (samples_decoded[i].1, r);
                 }
                 Err(_) => {
-                    println!("\nWarning: Thread {} is not responding.", i);
+                    println!("\nWarning: Thread {} is not responding.\n", i);
                     samples_decoded[i] = (-6, -6);
                     threads_finished += 1;
                 }
             }
         }
+
         // Print state
         print!("\r Decoding... [ ");
         for i in 0..4 {
@@ -139,7 +132,7 @@ pub fn mt_import_from_directory(path: &String) -> Result<(Vec<TrackBuffer>, bool
         thread::sleep(Duration::from_millis(10));
     }
 
-    print!("\rDone decoding.                                           \n");
+    print!("\rDone decoding.                                                                   \n");
 
     // Return the shared buffers
     let mut tracks_interleaved_vec = vec![];
@@ -148,7 +141,7 @@ pub fn mt_import_from_directory(path: &String) -> Result<(Vec<TrackBuffer>, bool
         tracks_interleaved_vec.push(track);
     }
 
-    return Result::Ok((tracks_interleaved_vec, is_original))
+    return Result::Ok(tracks_interleaved_vec)
 }
 
 
@@ -159,7 +152,7 @@ fn mt_import_track(path: &String, tx: Sender<i32>, buffer: Arc<Mutex<TrackBuffer
     let f = File::open(path);
     if f.is_err() { 
         println!("\nimport_from_file(): Could not open {}.", path);
-        tx.send(-1);
+        let _ = tx.send(-1);
         return;
     }
     let f = f.unwrap();
@@ -178,7 +171,7 @@ fn mt_import_track(path: &String, tx: Sender<i32>, buffer: Arc<Mutex<TrackBuffer
         Result::Ok(p)  => { p }
         Result::Err(_) => {  
             println!("\nsymphonia::default::get_probe(): Unsupported format");
-            tx.send(-2);
+            let _= tx.send(-2);
             return;  
         }
     };
@@ -188,7 +181,7 @@ fn mt_import_track(path: &String, tx: Sender<i32>, buffer: Arc<Mutex<TrackBuffer
     let track_count = format_reader.tracks().len();
     if track_count != 1 { 
         println!("\nimport_from_file(): This file doesn't contain just one audio track (containts {})", track_count);
-        tx.send(-3);
+        let _ =tx.send(-3);
         return;
     }
 
@@ -199,7 +192,7 @@ fn mt_import_track(path: &String, tx: Sender<i32>, buffer: Arc<Mutex<TrackBuffer
         Result::Ok(d)  => { d }
         Result::Err(_) => {  
             println!("import_from_file():\n\tget_codecs(): Unsupported format.");
-            tx.send(-4);
+            let _ = tx.send(-4);
             return;
         }
     };
@@ -217,7 +210,7 @@ fn mt_import_track(path: &String, tx: Sender<i32>, buffer: Arc<Mutex<TrackBuffer
             Ok(packet) => packet,
             Err(_) => { 
                 println!("\nimport_from_file(): The first packet caused an error.");
-                tx.send(-5);
+                let _ = tx.send(-5);
                 return; 
             }
         };
@@ -271,7 +264,7 @@ fn mt_import_track(path: &String, tx: Sender<i32>, buffer: Arc<Mutex<TrackBuffer
                     sample_count += buf.samples().len();
 
                     return_buffer.extend_from_slice(buf.samples());
-                    if sample_count % 64 == 0 { tx.send(sample_count as i32); }
+                    if sample_count % 64 == 0 { let _ = tx.send(sample_count as i32); }
                 }
             }
             Err(symphonia::core::errors::Error::DecodeError(_)) => { break; }
@@ -279,18 +272,17 @@ fn mt_import_track(path: &String, tx: Sender<i32>, buffer: Arc<Mutex<TrackBuffer
         }
     }
 
-    tx.send(sample_count as i32);
-    tx.send(sample_count as i32);
+    let _ = tx.send(sample_count as i32);
+    let _ = tx.send(sample_count as i32);
     return;
 }
 
-// ---------------------------------------------------------------------------------------------------------------------------------
 
+// Single Thread ------------------------------------------------------------------------------------------------------------------
 // Imports the 4 separated tracks from a directory; The names of the .mp3 files must be {bass, drums, vocals, other}.mp3
-// Returns TrackBuffers and true if the directory contains the original stems.
-pub fn import_from_directory(path: &String) -> Result<(Vec<TrackBuffer>, bool), String> {
+// Returns TrackBuffers
+pub fn import_from_directory(path: &String) -> Result<Vec<TrackBuffer>, String> {
     println!("Looking into {} for separated stems...", path);
-    let mut is_original: bool = false;
 
     // Check this directory has all the required files
     let dir_contents = match std::fs::read_dir(path) {
@@ -308,7 +300,7 @@ pub fn import_from_directory(path: &String) -> Result<(Vec<TrackBuffer>, bool), 
     for e in dir_contents {
         let entry = match e {
             Ok(r)  => { r }
-            Err(_) => { continue; } // Error entries will be silently skipped
+            Err(_) => { continue; } // Bad entries will be silently skipped
         };
 
         let mut req_files_it = required_files.iter();
@@ -316,13 +308,6 @@ pub fn import_from_directory(path: &String) -> Result<(Vec<TrackBuffer>, bool), 
         let item_path = &entry.path();
         let item_name = item_path.file_name().unwrap();
         
-        // Check if the `.original` hidden file exists
-        if item_name.eq(".original") {
-            is_original = true;
-            print!("Detected that this is the original source directory.");
-            continue;
-        }
-
         // Search for the filename in `required_files`
         match req_files_it.position(|&x| x == item_name) {
             Some(index) => {
@@ -353,7 +338,7 @@ pub fn import_from_directory(path: &String) -> Result<(Vec<TrackBuffer>, bool), 
         }
     } 
 
-    return Result::Ok((tracks_interleaved_vec, is_original))
+    return Result::Ok(tracks_interleaved_vec)
 }
 
 
@@ -379,8 +364,8 @@ pub fn import_track(path: &String) -> Result<TrackBuffer, String> {
         Result::Err(_) => {  return Result::Err(String::from("symphonia::default::get_probe(): Unsupported format"));  }
     };
 
+    // Handle format info
     let mut format_reader = probe.format;
-
     let track_count = format_reader.tracks().len();
     if track_count != 1 { return Result::Err(format!("import_from_file(): This file doesn't contain just one audio track (containts {})", track_count)); }
 
@@ -391,16 +376,15 @@ pub fn import_track(path: &String) -> Result<TrackBuffer, String> {
         Result::Ok(d)  => { d }
         Result::Err(_) => {  return Result::Err(format!("import_from_file():\n\tget_codecs(): Unsupported format."));  }
     };
-    //let track_id = track.id;
 
     // Start decoding
     let mut sample_count: usize = 0;
     let mut temp_buffer = Option::None;
     let mut return_buffer: Vec<f32> = vec![];
 
-    let decode_start = Instant::now();
 
     // Read the first packet
+    let decode_start = Instant::now();
     loop {
         let packet = match format_reader.next_packet()  {
             Ok(packet) => packet,
