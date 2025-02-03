@@ -10,11 +10,15 @@ The metric itself doesn't have a quantifiable meaning but can be used to measure
 ## Usage
 The program expects two directories as input arguments, where each directory contains the separated stems of a song.
 
-`speccomp directory1 directory2 [--serial]`
+```
+speccomp directory1 directory2 [--serial]
+```
 
 The `--serial` flag is optional and will force the program to execute in one thread instead of 8. This option is available for testing purposes.
 
 ## Multithreaded Execution
-Considering this task requires independant computations on 8 distinct tracks for the calculations of 8 different spectograms, utilizing multithreading allowed for speedups around 3.0 - 3.5.
+Considering this task requires independant computations on 8 distinct tracks for the calculations of 8 different spectograms, utilizing multithreading allowed for speedups around 2.0 - 3.0.
+
+The parallel version is by no means fully optimized. The final portion of the code, where the deviations between frequency bins are calculated, is not implemented to run in parallel yet.
 
 
