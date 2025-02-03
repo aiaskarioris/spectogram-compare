@@ -1,0 +1,9 @@
+[package]
+name = "spec-compare"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rustfft = "*"
+symphonia = { version = "*", features = ["all-codecs"]}
+plotters = "*"
