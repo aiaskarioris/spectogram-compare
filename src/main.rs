@@ -2,35 +2,65 @@ use std::fs::File;
 use std::io::Write;
 use std::env;
 
-// For plotting
 use speccomp::types::*;
 use speccomp::importerts::*;
 use speccomp::spectograms::*;
 
+use std::time::Instant; // for benchmarking
 
+// Receives two directories as input arguments and compares the audio files located inside them.
+// Both directories must containt the four X-UMX targets: Bass, Drums, Vocals & Other
 fn main() {
     let args: Vec<String>  = env::args().collect();
 
-    if args.len() != 3 {
-        println!("usage: spec-compare source1 source2\n    A source can be either a file with multiple tracks or a directory with separated stems.\n");
+    if (args.len() != 3) && (args.len() != 4) {
+        println!("usage: spec-compare source1 source2 [--serial]\n    A source can be either a file with multiple tracks or a directory with separated stems.\n");
         return;
     }
 
     println!("\n=== Spectogram Compare for X-UMX =======================================================================================");
     println!(  "  Aias Karioris, 2023-2025\n");
 
-
-    // Load files
-    let mut dir1: Vec<TrackBuffer> = match mt_import_from_directory(&args[1]) {
-        Ok(o)  => { o }
-        Err(e) => { println!("{e}"); panic!("{e}"); }
+    // For testing purposes, serial execution is available and enabled with the "--serial" flag
+    let in_parallel: bool = match args.get(3) {
+        Option::Some(s) => { s != "--serial" }
+        Option::None => { true }
     };
+    if !in_parallel { println!("Serial execution is enabled."); }
 
-    let mut dir2: Vec<TrackBuffer> = match mt_import_from_directory(&args[2]) {
-        Ok(o)  => { o }
-        Err(e) => { println!("{e}"); panic!("{e}"); }
-    };
+    // Start a timer
+    let start_time = Instant::now();
 
+    // Import files; every track will be loaded into `input_tracks`.
+    let mut input_tracks: Vec<TrackBuffer> = vec![];
+    match in_parallel {
+        true => {
+            // Load 4+4 tracks in parallel
+            match mt_import_from_directory(&args[1]) {
+                Ok(mut o)  => { input_tracks.append(&mut o); }
+                Err(e) => { println!("{e}"); panic!("{e}"); }
+            }
+        
+            match mt_import_from_directory(&args[2]) {
+                Ok(mut o)  => { input_tracks.append(&mut o); }
+                Err(e) => { println!("{e}"); panic!("{e}"); }
+            };
+        }
+        
+        false => {
+            // Load everything sequentially
+            match import_from_directory(&args[1]) {
+                Ok(mut o)  => { input_tracks.append(&mut o); }
+                Err(e) => { println!("{e}"); panic!("{e}"); }
+            }
+
+            match import_from_directory(&args[2]) {
+                Ok(mut o)  => { input_tracks.append(&mut o); }
+                Err(e) => { println!("{e}"); panic!("{e}"); }
+            }
+        }
+    }
+    
     // Create a look-up vector with target names
     let stem_names: Vec<String> = vec![
         String::from("Bass"), 
@@ -42,13 +72,26 @@ fn main() {
     println!("");
     let fft_size: u32 = 4096;
 
-    // Create a vector with input tracks
-    let mut input_tracks: Vec<TrackBuffer> = vec![];
-    input_tracks.append(&mut dir1);
-    input_tracks.append(&mut dir2);
-    let mut spectograms_ret = mt_track_to_spec(fft_size, input_tracks);
+    // Calculate spectograms
+    let mut spectograms_ret = match in_parallel {
+        // All spectograms are calculated in parallel
+        true  => { mt_track_to_spec(fft_size, input_tracks) }
 
-    // Take the spectograms out
+        // Sequential...
+        false => {
+            // Create a return buffer and allocate memory for it
+            let mut ret: Vec<StereoSpectogram> = vec![];
+            ret.reserve(input_tracks.len());
+
+            for i in &input_tracks {
+                ret.push(track_to_spec(fft_size, i));
+            }
+            ret
+        }
+    };
+    
+
+    // Unwrap
     let mut spectograms_1: Vec<StereoSpectogram> = vec![];
     for _ in 0..4 {
         spectograms_1.push(spectograms_ret.pop().unwrap());
@@ -60,6 +103,9 @@ fn main() {
     }
 
     // Compare spectograms
+    // Two methods are used: In "Time Mode" all bin differences influene the final result in the same way
+    // In "Frequency Mode" bin differences of higher frequencies influence the final result less, since they are less
+    // noticable by the human ear. 
     println!("");
     let mut time_mean_error: Vec<f32> = vec![];
     let mut freq_mean_error: Vec<f32> = vec![];
@@ -91,7 +137,7 @@ fn main() {
         }
     }
 
-    // Calculate final results
+    // Calculate final results by getting the mean error from all tracks
     let mut time_me: f32 = 0.0;
     let mut freq_me: f32 = 0.0;
     for i in 0..4 {
@@ -100,6 +146,9 @@ fn main() {
     }
     time_me /= 4.0;
     freq_me /= 4.0;
+
+    // Stop the timer and display execution time
+    println!("\rDone processing! Time elapsed: {:.2} ms\n", start_time.elapsed().as_millis());
 
     // Display final results
     print!("\n-- Final Results ----------------------------------------\n");
@@ -110,6 +159,7 @@ fn main() {
         freq_mean_error[0], freq_mean_error[1], freq_mean_error[2], freq_mean_error[3], freq_me); 
 }
 
+// --- Unused functions ------------------------------------------------------------------------------
 // Exports comparison results into a csv file
 fn export_error_csv(path: &String, data: &Vec<f32>) -> Result<(), String> {
     // Create the buffer first

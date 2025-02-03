@@ -1,7 +1,7 @@
 use crate::types::*;
 
 use std::{
-    time::{Duration, Instant}, f32::consts::PI,
+    time::Duration, f32::consts::PI,
     thread::JoinHandle, sync::{Arc, Mutex}, cmp::min,
     thread, sync::mpsc::{Sender, Receiver, channel}
 };
@@ -12,13 +12,13 @@ use rustfft::{FftPlanner, num_complex::Complex};
 
 // Multithreaded variants ---------------------------------------------------------------------------------------------------
 // Calculates the spectogram of each track in `input_tracks` in parallel.
-// THe returned spectograms are stored in the reverse order from which their inputs were given.
+// The returned spectograms are stored in the reverse order from which their inputs were given.
 // `input_tracks` is consumed (no need to go the extra mile so that it doesn't.)
 pub fn mt_track_to_spec(fft_size_u32: u32, input_tracks: Vec<TrackBuffer>) -> Vec<StereoSpectogram> {
     let fft_size: usize = fft_size_u32 as usize;
     let input_count: usize = input_tracks.len();
 
-    // Use n MPSC pairs, one for each input track
+    // Use 4 MPSC pairs, one for each input track
     let mut receivers: Vec<Receiver<i32>> = vec![];
     receivers.reserve(input_count);
 
@@ -73,13 +73,7 @@ pub fn mt_track_to_spec(fft_size_u32: u32, input_tracks: Vec<TrackBuffer>) -> Ve
             }
         }
             // Print state
-        print!("\r Calculating spectograms ({}%)... [ ", overall_progress/input_count);
-        for i in 0..input_count {
-            if thread_progress[i] == -1 { print!(" ERR \t"); }
-            else if thread_progress[i] >= 100 { print!("DONE \t"); }
-            else { print!("0{}% \t", thread_progress[i]); }
-        }
-        print!("]");
+        print!("\r Calculating spectograms ({}%)... ", overall_progress/input_count);
 
         // Sleep
         thread::sleep(Duration::from_millis(1));
@@ -102,6 +96,8 @@ pub fn mt_track_to_spec(fft_size_u32: u32, input_tracks: Vec<TrackBuffer>) -> Ve
     return spectograms;
 }
 
+// Function each thread executes; Samples in `input_track` are converted to a stereo spectogram
+// STFT is done with a Hann Window.
 fn mt_track_to_spec_thread(fft_size: usize, input_track: &TrackBuffer, tx: Sender<i32>, output_buffer: Arc<Mutex<StereoSpectogram>>) {
     // Number of samples and number of samples per channel
     let buffer_size: usize = input_track.len();
@@ -146,8 +142,10 @@ fn mt_track_to_spec_thread(fft_size: usize, input_track: &TrackBuffer, tx: Sende
 
     let mut last_percentage: i32 = 0;
     let mut new_percentage: i32;
-    loop {
 
+    // Create STFT windows
+    loop {
+        // Calculate local progress to let the parent thread know the overall progress of the program
         new_percentage = (samples_processed * 100 / buffer_duration) as i32;
         if new_percentage > last_percentage {
             let _ = tx.send(new_percentage);
@@ -163,7 +161,6 @@ fn mt_track_to_spec_thread(fft_size: usize, input_track: &TrackBuffer, tx: Sende
                     window_buffer_r.push(Complex::new(source[idx+1] * hann_window[i], 0.0f32));
                 }
             }
-
             true => { // Will have to pad
                 // Get all remaining samples
                 for i in 0..(buffer_duration % fft_size) {
@@ -183,7 +180,6 @@ fn mt_track_to_spec_thread(fft_size: usize, input_track: &TrackBuffer, tx: Sende
         fft.process(&mut window_buffer_l); // process() returns the output within the input argument
         fft.process(&mut window_buffer_r);
         
-
         // Calculate the spectogram
         for i in 0..fft_size/2 {
             return_buffer.left.push(window_buffer_l[i].re.powi(2));
@@ -198,13 +194,14 @@ fn mt_track_to_spec_thread(fft_size: usize, input_track: &TrackBuffer, tx: Sende
         if samples_processed > buffer_duration { break; }
     }
 
+    // Let parent thread know this thread is done
     let _ = tx.send(100);
 
     // The mutex will be unlocked automatically now
 }
 
 
-// Single core variants -----------------------------------------------------------------------------------------------------
+// Single core variant -----------------------------------------------------------------------------------------------------
 // Convert a track to a spectogram
 pub fn track_to_spec(fft_size_u32: u32, sample_buffer: &TrackBuffer) -> StereoSpectogram {
     let fft_size: usize = fft_size_u32 as usize;
@@ -250,13 +247,8 @@ pub fn track_to_spec(fft_size_u32: u32, sample_buffer: &TrackBuffer) -> StereoSp
     let mut samples_processed: usize = 0;
     let source = sample_buffer.as_slice();
 
-    let mut frames_generated: u32 = 0;
-    let processing_start = Instant::now();
+    // Create spectogram by computing STFT frames
     loop {
-        if samples_processed % 128 == 0 {
-            //print!("\r Generating spectogram... {}%", samples_processed*100/buffer_duration);
-        }
-
         // Check if this window will exceed the input buffer's size
         match samples_processed + fft_size > buffer_duration {
             false => { // No need to pad
@@ -286,7 +278,6 @@ pub fn track_to_spec(fft_size_u32: u32, sample_buffer: &TrackBuffer) -> StereoSp
         fft.process(&mut window_buffer_l); // process() returns the output within the input argument
         fft.process(&mut window_buffer_r);
         
-
         // Calculate the spectogram
         for i in 0..fft_size/2 {
             spectogram_buffer_l.push(window_buffer_l[i].re.powi(2));
@@ -298,24 +289,23 @@ pub fn track_to_spec(fft_size_u32: u32, sample_buffer: &TrackBuffer) -> StereoSp
         window_buffer_r.clear();
 
         samples_processed += fft_size;
-        frames_generated += 1;
         if samples_processed > buffer_duration { break; }
     }
-
-    let processing_time = processing_start.elapsed();
-    println!("\r        Generated {} spectogram frames ({} bins each).\t[{} ms]", frames_generated, fft_size/2, processing_time.as_millis());
 
     // Return sepctograms
     StereoSpectogram {left: spectogram_buffer_l, right: spectogram_buffer_r}
 }
 
 
+// Functions for comparison -----------------------------------------------------------------------------------------------
+// TODO: Make parallel versions
 
 // Compares two stereo spectograms; Returns a tuple: a vector with the mean error of each frame and the total mean error
 // The error of each channel is calculated independantly and the mean of the two is kept
 pub fn time_compare_spectogram(bins: u32, spec_a: &StereoSpectogram, spec_b: &StereoSpectogram) -> Result<(Vec<f32>, f32), String> {
     let bins_us = bins as usize;
 
+    // Name these burrows for more readable code
     let (spec_a_l, spec_a_r) = (&spec_a.left, &spec_a.right);
     let (spec_b_l, spec_b_r) = (&spec_b.left, &spec_b.right);
 
@@ -335,12 +325,14 @@ pub fn time_compare_spectogram(bins: u32, spec_a: &StereoSpectogram, spec_b: &St
             bins, spec_b_l.len(), bins, spec_b_l.len() as f32 / bins as f32));
     }
 
-    // Warn user if a frame count mismatch occurred
+    // Warn user if a frame count mismatch occurred; Sometimes a difference of one frame appears due to
+    // rounding errors in X-UMX but these can be ignored
     if spec_a_frame_count != spec_b_frame_count { 
-        println!("Warning: Different input sizes (spec_a: {} frames, spec_b: {} frames), using {} frames.", 
+        println!("\nWarning: Different input sizes (spec_a: {} frames, spec_b: {} frames), using {} frames.", 
         spec_a_frame_count, spec_b_frame_count, usable_frames); 
     }
 
+    // Start calculation
     let mut mean_err_vec: Vec<f32> = vec![];
     mean_err_vec.reserve(usable_frames as usize);
 
@@ -370,11 +362,14 @@ pub fn time_compare_spectogram(bins: u32, spec_a: &StereoSpectogram, spec_b: &St
     }
     mean_error /= usable_frames as f32;
 
+    // Clear the leftover "Comparing... " message
+    print!("\r                                                          ");
+
     Result::Ok((mean_err_vec, mean_error))
 }
 
-// Compares two stereo spectograms in terms of frequency; For each bin, the mean error from all frames is returned
-// If `has_original` is set, `spec_a` is treated as the original.
+// Compares two stereo spectograms in terms of frequency; For each bin, the mean error from all frames is returned.
+// This function gives smaller weights to higher frequencies since differences in them are less noticable.
 pub fn freq_compare_spectogram(bins: u32, spec_a: &StereoSpectogram, spec_b: &StereoSpectogram) -> Result<(Vec<f32>, f32), String> {
     let bins_us = bins as usize;
 
@@ -399,7 +394,7 @@ pub fn freq_compare_spectogram(bins: u32, spec_a: &StereoSpectogram, spec_b: &St
 
     // Warn user if a frame count mismatch occurred
     if spec_a_frame_count != spec_b_frame_count { 
-        println!("Warning: Inputs of compare_spectogram have different sizes (spec_a: {} frames, spec_b: {} frames), only {} frames will be used.", 
+        println!("\nWarning: Inputs of compare_spectogram have different sizes (spec_a: {} frames, spec_b: {} frames), only {} frames will be used.", 
             spec_a_frame_count, spec_b_frame_count, usable_frames); 
     }
 
@@ -440,6 +435,9 @@ pub fn freq_compare_spectogram(bins: u32, spec_a: &StereoSpectogram, spec_b: &St
         mean_error += mean_err_vec[b as usize];
     }
     mean_error /= bins as f32;
+
+    // Clear the leftover "Comparing... " message
+    print!("\r                                                          ");
 
     Result::Ok((mean_err_vec, mean_error))
 }

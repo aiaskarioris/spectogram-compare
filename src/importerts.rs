@@ -429,7 +429,7 @@ pub fn import_track(path: &String) -> Result<TrackBuffer, String> {
         };
         
         // Skip packets of different tracks
-        // Probably not needed since we checked there is only one track in the file
+        // (Probably not needed since we checked there is only one track in the file)
         // if packet.track_id() != track_id {continue;}
 
         // Decode to audio sample
