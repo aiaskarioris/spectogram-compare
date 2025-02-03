@@ -1,7 +1,7 @@
 # Spectogram Comparison Utility
 Utility for comparing results of X-UMX (audio separation) in parallel, written in Rust.
 
-This program is intended to be used as a metric tool for X-UMX inference results, by calculating the mean error between STFT frames of each output tracks pair (e.g. bass output of dir1 with bass output for dir2). The program displays the error found on each pair of stems (Bass, Drums, Vocals and Other) as well as the mean error of the 4. The program uses 2 algorithms for calculating the final errors, one where all frequency bins of respective STFT frames are treated equally (Time mode) and one where bins of higher frequency have a smaller effect on the overall results (Frequency mode).The latter method was implemented so that the final metric would loosely reflect the Frequency/Perceived Loudness curve of the human ear. 
+This program is intended to be used as a metric tool for X-UMX inference results, by calculating the mean error between STFT frames of each output tracks pair (e.g. bass output of dir1 with bass output for dir2). The program displays the error found on each pair of stems (Bass, Drums, Vocals and Other) as well as the mean error of the 4. The program uses 2 algorithms for calculating the final errors, one where all frequency bins of respective STFT frames are treated equally (Time mode) and one where bins of higher frequency have a smaller effect on the overall results (Frequency mode). The latter method was implemented so that the final metric would loosely reflect the Frequency/Perceived Loudness curve of the human ear. 
 
 The metric itself doesn't have a quantifiable meaning but can be used to measure relative changes in quality between different settings in X-UMX. 
 
